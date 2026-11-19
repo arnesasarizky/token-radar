@@ -3,141 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar — pre-token protocols ranked by implied value</title>
+<title>Token Launch Radar — 198 pre-token candidates, priced and planned</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-
-<header class="masthead">
-  <div class="wrap">
-    <p class="eyebrow">Token Radar · Pre-token protocol board</p>
-    <h1>Which protocols are worth the most<br class="br">before they have a token?</h1>
-    <p class="lede">
-      Every protocol here still records no token of its own. The radar asks what a token would be
-      worth if it existed today &mdash; and ranks the board by the answer. The model is one line:
-    </p>
-    <p class="formula">Implied value = TVL &times; peer multiple &times; 7-day growth factor &times; tokenless-age factor</p>
-    <p class="model-note">
-      The peer multiple is the median market-cap-to-TVL ratio of token-bearing protocols in the same
-      category &mdash; what the market already pays for a dollar of TVL in comparable protocols &mdash;
-      shrunk toward the global median (<span data-global-multiple>0.169&times;</span> across
-      <span data-global-peers>144</span> peers) when a category has few peers of its own, and clamped
-      between 0.02&times; and 2.5&times;. The growth factor turns seven days of TVL change into a
-      0.5&ndash;1.8 multiplier; the age factor adds 6% for every year a protocol has run without a
-      token, up to +35%. Nothing here predicts a token will arrive: the value is the model's claim,
-      stated so it can be checked.
-    </p>
-    <dl class="stats">
-      <div><dt>Protocols ranked</dt><dd data-stat="board">&ndash;</dd></div>
-      <div><dt>On the house watchlist</dt><dd data-stat="watchlist">&ndash;</dd></div>
-      <div><dt>Live peers tracked</dt><dd data-stat="live">&ndash;</dd></div>
-      <div><dt>Snapshot date</dt><dd data-stat="asof">&ndash;</dd></div>
-    </dl>
-    <p class="source-line">Built from a frozen DefiLlama protocols snapshot (every protocol at $5M TVL or more,
-      watchlist floor $50M). Model version <span data-stat="version">&ndash;</span>.</p>
+<header id="top">
+  <div class="brand">
+    <span class="logo">◉</span>
+    <span class="bname">TOKEN LAUNCH RADAR</span>
+    <span class="bsub" id="bsub">pre-token protocols, priced by the comps curve and ranked by expected value</span>
   </div>
-</header>
-
-<main class="wrap">
-
-  <nav class="view-tabs" aria-label="Views">
-    <button type="button" id="tab-board" class="tab is-active">Pre-token board</button>
-    <button type="button" id="tab-live" class="tab">Live peers &amp; multiples</button>
+  <nav>
+    <a href="#/board">Board</a>
+    <a href="#/watchlist">Watchlist wall</a>
+    <a href="#/method">Method</a>
+    <a href="#/portfolio">Portfolio</a>
   </nav>
-
-  <section id="view-board" aria-label="Pre-token board">
-    <form class="controls" id="controls" autocomplete="off">
-      <label class="ctl ctl-search">Search
-        <input type="search" id="f-q" placeholder="Protocol name or slug">
-      </label>
-      <label class="ctl">Category
-        <select id="f-category"><option value="">All categories</option></select>
-      </label>
-      <label class="ctl">Chain
-        <select id="f-chain"><option value="">All chains</option></select>
-      </label>
-      <label class="ctl">Min TVL
-        <select id="f-min">
-          <option value="0">Any size</option>
-          <option value="10000000">$10M+</option>
-          <option value="25000000">$25M+</option>
-          <option value="50000000">$50M+ (watchlist floor)</option>
-          <option value="100000000">$100M+</option>
-          <option value="500000000">$500M+</option>
-          <option value="1000000000">$1B+</option>
-        </select>
-      </label>
-      <label class="ctl ctl-check">
-        <input type="checkbox" id="f-watch"> Watchlist only
-      </label>
-      <p class="count" id="count" role="status"></p>
-    </form>
-
-    <div class="table-scroll">
-      <table class="board" id="board-table">
-        <thead>
-          <tr>
-            <th data-sort="rank" class="num sortable">Rank</th>
-            <th data-sort="name" class="sortable">Protocol</th>
-            <th>Category</th>
-            <th>Chains</th>
-            <th data-sort="tvl" class="num sortable">TVL</th>
-            <th data-sort="change" class="num sortable">7d change</th>
-            <th data-sort="implied" class="num sortable">Implied value</th>
-          </tr>
-        </thead>
-        <tbody id="board-body"></tbody>
-      </table>
-    </div>
-    <p class="hint">Select any row for the full valuation breakdown and its five-step farm plan.
-      Implied value is what the model says a token would be worth today &mdash; a claim to argue with, not a forecast.</p>
-  </section>
-
-  <section id="view-detail" aria-label="Protocol detail" hidden>
-    <button type="button" id="back" class="back">&larr; Back to the board</button>
-    <div id="detail-body"></div>
-  </section>
-
-  <section id="view-live" aria-label="Live peers and multiples" hidden>
-    <h2>Where the multiples come from</h2>
-    <p class="section-note">
-      A pre-token protocol is valued against protocols whose tokens already trade. For each category the
-      model takes the median market-cap-to-TVL ratio of its token-bearing peers (TVL $5M or more), then
-      shrinks it toward the global median so a category with two peers cannot shout down one with twenty.
-      Categories with fewer than three peers borrow the global median outright. These are the multiples
-      actually applied to the board:
-    </p>
-    <div class="table-scroll">
-      <table class="board slim" id="multiples-table">
-        <thead><tr><th>Category</th><th class="num">Token-bearing peers</th><th class="num">Category median</th><th class="num">Multiple applied</th></tr></thead>
-        <tbody id="multiples-body"></tbody>
-      </table>
-    </div>
-    <h2>The live comparison set</h2>
-    <p class="section-note">
-      The largest token-bearing protocols in the snapshot, kept apart from the pre-token board: their
-      market caps are the market's own numbers, not the model's, and they are the evidence the peer
-      multiples rest on.
-    </p>
-    <div class="table-scroll">
-      <table class="board slim" id="live-table">
-        <thead><tr><th>Protocol</th><th>Category</th><th>Chains</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">Mkt cap / TVL</th><th class="num">7d change</th></tr></thead>
-        <tbody id="live-body"></tbody>
-      </table>
-    </div>
-  </section>
-
-</main>
-
-<footer class="wrap foot">
-  <p>How to read this board: rank is the model's ordering by implied value, nothing else. A protocol can be
-    large, old and still cheap if its category's tokens trade at a low multiple of TVL; a small one can rank
-    high on momentum alone. Every farm plan is honest use of the product &mdash; deposit, trade, lend, hold &mdash;
-    because a launch, if one ever comes, can only reward wallets the protocol can actually see. No step
-    promises a token, an airdrop or a return.</p>
+</header>
+<main id="app"><p class="loading">Pricing the snapshot…</p></main>
+<footer>
+  <span id="foot">The model re-runs in your browser — impliedValue() · launchOdds() · farmPlan() · checkBoard()</span>
 </footer>
-
 <script src="../data.js"></script>
+<script src="model.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
