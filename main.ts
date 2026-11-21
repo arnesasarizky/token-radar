@@ -112,6 +112,7 @@ const data = {
     band90: r.band90,
     rankLo: r.rankLo,
     rankHi: r.rankHi,
+    plan: r.plan,
     slice: r.slice,
     costs: r.costs,
     net: r.net,
@@ -190,7 +191,8 @@ process.stdout.write(
     `token radar: comps ${meta.curve.comps}, curve 10^${meta.curve.intercept} x TVL^${meta.curve.slope}; ` +
     `LOO x${v.curveLoo} vs flat x${v.flatLoo}, walk-forward x${v.curveWf} vs flat x${v.flatWf}; ` +
     `odds AUC ${meta.odds.auc}, split hit ${meta.odds.splitModelHit} vs base caller ${meta.odds.splitBaseHit}\n` +
-    `token radar: verdicts at $1,000 — ${meta.farm.at1000.FARM} FARM / ${meta.farm.at1000.THIN} THIN / ${meta.farm.at1000.SKIP} SKIP; ` +
+    `token radar: verdicts at plan size — ${meta.farm.atPlan.FARM} FARM / ${meta.farm.atPlan.THIN} THIN / ${meta.farm.atPlan.SKIP} SKIP (first FARM: ${meta.farm.firstFarmAtPlan ?? 'none'}); ` +
+    `at $1,000 — ${meta.farm.at1000.FARM} FARM / ${meta.farm.at1000.THIN} THIN / ${meta.farm.at1000.SKIP} SKIP; ` +
     `at $10,000 — ${meta.farm.at10000.FARM} FARM (first: ${meta.farm.firstFarmAt10000 ?? 'none'})\n` +
     `token radar: wrote board.json (${board.length} rows), data.js, dashboard/ (${dashFiles.length} files), ` +
     `screenshots/ (${shots.length} images) and dossier.json to ${out} in ${((performance.now() - started) / 1000).toFixed(2)}s\n`,

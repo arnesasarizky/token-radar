@@ -1,8 +1,6 @@
-// Token Launch Radar — the model, re-run in your browser.
-// Plain-JS twin of the Node model: same sealed snapshot in, same prices out.
-// impliedValue() fits the comps curve (Huber IRLS) · launchOdds() reads the
-// empirical launch cells · farmPlan() prices a farm at any ticket ·
-// checkBoard() re-prices every board row and prints the equality line.
+// Token Launch Radar — the model, re-run in your browser: the plain-JS
+// twin of the Node model. impliedValue() · launchOdds() · farmPlan() ·
+// planSize() · checkBoard() — same sealed snapshot in, same prices out.
 window.RadarModel = (function () {
   "use strict";
   var R = window.RADAR || { meta: {}, rows: [], protocols: [], watchlist: [] };
@@ -187,20 +185,20 @@ window.RadarModel = (function () {
   }
 
   // ---- farmPlan(): the farm economics of one row at any ticket ----
-  // Fee priors per chain, as stated on the page; a row's own step fees rule
-  // whenever the board carries them.
   var FEE_PRIORS = { "Ethereum": 6.00, "Arbitrum": 0.45, "Base": 0.35, "BSC": 0.30, "Solana": 0.10, "_default": 1.50 };
   function feePrior(chain) { return FEE_PRIORS[chain] != null ? FEE_PRIORS[chain] : FEE_PRIORS._default; }
-  // Weeks held is backed out of the board's own default-ticket costs, so the
-  // browser's numbers land on the board's at the default assumptions.
+  // Weeks held is backed out of the board's own plan-size costs.
   function weeksOf(row, fees) {
-    var w = (row.costs - fees) * 52 / (1000 * 0.04);
+    var w = (row.costs - fees) * 52 / ((row.plan || 1000) * 0.04);
     if (isFinite(w) && w >= 1 && w <= 60) return w;
     var ds = (row.steps || []).map(function (s) { return Date.parse(s.date); }).filter(isFinite);
     if (ds.length > 1) return Math.min(52, Math.max(1, Math.round((Math.max.apply(null, ds) - Math.min.apply(null, ds)) / (7 * DAY))));
     return 10;
   }
   function verdictOf(be) { return be <= 0.10 ? "FARM" : be <= 0.33 ? "THIN" : "SKIP"; }
+  // planSize(): the board's default deposit for a row — 0.02% of its TVL,
+  // clamped to [$500, $10,000]; the twin of planSizeFor() in the Node model.
+  function planSize(tvl) { return Math.min(10000, Math.max(500, 0.0002 * tvl)); }
   function farmPlan(row, ticket, share, tbill) {
     var fees = 0, mins = 0;
     (row.steps || []).forEach(function (s) { fees += s.fee || 0; mins += s.minutes || 0; });
@@ -240,66 +238,33 @@ window.RadarModel = (function () {
       paysFrom: pays, robust: robust, at: at };
   }
 
-  // ---- validation extras the Method view prints ----
-  function reliability() {
-    var scored = P.map(function (p) { return { o: launchOdds(p), t: tokened(p) ? 1 : 0 }; });
-    scored.sort(function (a, b) { return a.o - b.o; });
-    var out = [], per = Math.floor(scored.length / 10) || 1;
-    for (var d = 0; d < 10; d++) {
-      var part = scored.slice(d * per, d === 9 ? scored.length : (d + 1) * per);
-      if (!part.length) continue;
-      var mp = 0, mt = 0;
-      part.forEach(function (s) { mp += s.o; mt += s.t; });
-      out.push({ lo: part[0].o, hi: part[part.length - 1].o, pred: mp / part.length, realised: mt / part.length, n: part.length });
-    }
-    return out;
-  }
-  function cohort() {
-    ensureLoo();
-    var dated = comps.map(function (c, i) { return { c: c, i: i }; })
-      .sort(function (a, b) { return Date.parse(a.c.listed_at) - Date.parse(b.c.listed_at); });
-    var half = Math.floor(dated.length / 2), tally = { oldIn: 0, oldN: 0, newIn: 0, newN: 0 };
-    dated.forEach(function (e, idx) {
-      var v = impliedValue(e.c), band = bandsFor(e.c, v.value);
-      var inside = e.c.mcap_usd >= band.lo && e.c.mcap_usd <= band.hi ? 1 : 0;
-      if (idx < half) { tally.oldIn += inside; tally.oldN++; } else { tally.newIn += inside; tally.newN++; }
-    });
-    return tally;
-  }
-  function weakest() {
-    ensureLoo();
-    var byCat = {};
-    comps.forEach(function (c, i) {
-      var k = c.category || "—";
-      (byCat[k] = byCat[k] || []).push(Math.abs(looRes[i]));
-    });
-    var worst = null;
-    Object.keys(byCat).forEach(function (k) {
-      var a = byCat[k];
-      if (a.length < 8) return;
-      var m = Math.pow(10, median(a));
-      if (!worst || m > worst.miss) worst = { cat: k, n: a.length, miss: m };
-    });
-    if (!worst) return null;
-    var flatRes = compPts.map(function (pt) { return pt[1] - pt[0]; });
-    var off = median(flatRes);
-    var flatMiss = Math.pow(10, median(compPts.map(function (pt) { return Math.abs(pt[1] - (pt[0] + off)); })));
-    return { cat: worst.cat, n: worst.n, miss: worst.miss, flat: flatMiss, line:
-      "Weakest: " + worst.cat + " (" + worst.n + " traded), median miss ×" + worst.miss.toFixed(2) +
-      " — still better than flat's ×" + flatMiss.toFixed(2) };
-  }
+  // The Method view's validation extras (odds reliability deciles, band
+  // cohorts, weakest category) ship in the board's meta, computed once by
+  // the Node model; the browser's re-pricing core is checkBoard() below.
 
-  // ---- checkBoard(): re-price the whole board in the browser and compare ----
+  // ---- checkBoard(): re-price the whole board in the browser and compare.
+  //      The integrity strip: board total and an FNV-1a seal over
+  //      rank:slug:implied, from the shipped rows and from the re-pricing —
+  //      equal only if every implied value here is the model's own. ----
+  function sealOf(parts) {
+    var h = 0x811c9dc5, s = parts.join(";");
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return ("0000000" + h.toString(16)).slice(-8);
+  }
   function checkBoard() {
     ensureFit();
-    var match = 0;
+    var match = 0, totMine = 0, totShip = 0, mine = [], ship = [];
     ROWS.forEach(function (row) {
       var p = bySlug[row.slug];
       if (!p) return;
       var v = impliedValue(p);
       var o = launchOdds(p);
       var band = bandsFor(p, v.value);
-      var fp = farmPlan(row, 1000, 0.10, 0.04);
+      var fp = farmPlan(row, planSize(row.tvl), 0.10, 0.04);
+      var imp = Math.max(1, Math.round(v.raw * o)), impShip = Math.max(1, row.ev);
+      totMine += imp; totShip += impShip;
+      mine.push(row.rank + ":" + row.slug + ":" + imp);
+      ship.push(row.rank + ":" + row.slug + ":" + impShip);
       var ok = Math.abs(v.value - row.valueIfLaunched) <= 1 &&
         Math.round(o * 1000) === Math.round(row.odds * 1000) &&
         Math.abs(band.lo - row.bandLo) <= Math.max(1, row.bandLo * 0.005) &&
@@ -312,17 +277,21 @@ window.RadarModel = (function () {
     P.forEach(function (p) {
       if (tokened(p) || rowBySlug[p.slug] || setAsideClass(p)) accounted++;
     });
+    var sM = sealOf(mine), sS = sealOf(ship);
     var line = "page = board.json · " + match + "/" + ROWS.length +
-      " rows re-priced in your browser match · watchlist " + wlIn + "/" + WL.length +
+      " rows re-priced in your browser match · board total $" + totShip.toLocaleString("en-US") +
+      " = $" + totMine.toLocaleString("en-US") + " · seal " + sS + " = " + sM +
+      " · watchlist " + wlIn + "/" + WL.length +
       " · " + accounted + "/" + P.length + " accounted";
     if (window.console && console.log) console.log(line);
-    return { line: line, match: match, total: ROWS.length, watchlist: wlIn, accounted: accounted };
+    return { line: line, match: match, total: ROWS.length, watchlist: wlIn, accounted: accounted,
+      totalShip: totShip, totalMine: totMine, sealShip: sS, sealMine: sM };
   }
 
   return {
-    impliedValue: impliedValue, launchOdds: launchOdds, farmPlan: farmPlan, checkBoard: checkBoard,
+    impliedValue: impliedValue, launchOdds: launchOdds, farmPlan: farmPlan, planSize: planSize, checkBoard: checkBoard,
     bandsFor: bandsFor, ageDays: ageDays, tokened: tokened, isSibling: isSibling,
-    setAsideClass: setAsideClass, reliability: reliability, cohort: cohort, weakest: weakest,
+    setAsideClass: setAsideClass,
     verdictOf: verdictOf, feePrior: feePrior, FEE_PRIORS: FEE_PRIORS,
     curve: function () { ensureFit(); return { a: fit[0], b: fit[1] }; },
     comps: function () { ensureFit(); return comps; },

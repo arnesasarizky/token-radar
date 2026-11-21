@@ -79,6 +79,7 @@ export interface RadarRow {
   band90: number;
   rankLo: number;
   rankHi: number;
+  plan: number;
   slice: number;
   costs: number;
   net: number;
@@ -782,6 +783,21 @@ export const WEEKS_HELD = 8;
 export const DROP_SHARE = 0.1;
 export const TBILL = 0.04;
 export const DEFAULT_TICKET = 1000;
+export const PLAN_TVL_SHARE = 0.0002;
+export const PLAN_MIN = 500;
+export const PLAN_MAX = 10000;
+
+/**
+ * planSizeFor(): the board's default deposit for a row — 0.02% of the
+ * row's own TVL, clamped to [$500, $10,000]. A fixed $1,000 ticket against
+ * a $2.76B TVL stakes almost nothing and farms nothing; sizing the plan to
+ * the protocol is what a farmer would actually do, so the board's verdicts
+ * are read at the plan size. The reader's fixed-ticket explorer on the
+ * detail page is unchanged.
+ */
+export function planSizeFor(tvl: number): number {
+  return Math.min(PLAN_MAX, Math.max(PLAN_MIN, PLAN_TVL_SHARE * tvl));
+}
 
 /** The stated per-transaction fee prior for a chain. */
 export function chainFee(chain: string | undefined): number {
@@ -1039,10 +1055,12 @@ export interface RadarMeta {
   };
   stability: { top20Stay: number; top20N: number; medianRankWidth: number; rowsFarFromTvl: number };
   farm: {
+    atPlan: { FARM: number; THIN: number; SKIP: number };
+    firstFarmAtPlan: string | null;
     at1000: { FARM: number; THIN: number; SKIP: number };
     at10000: { FARM: number; THIN: number; SKIP: number };
     firstFarmAt10000: string | null;
-    robustAt1000: number;
+    robustAtPlan: number;
   };
 }
 
@@ -1121,7 +1139,8 @@ export function runModel(snapshot: Snapshot): { rows: RadarRow[]; meta: RadarMet
     if (Math.abs(i + 1 - tvlRank.get(r.p.slug)!) >= 5) rowsFarFromTvl++;
   });
 
-  // Rows with farm economics at the default ticket.
+  // Rows carry farm economics at their own plan size (planSizeFor); the
+  // fixed-ticket counts stay in the meta for the detail page's explorer.
   const verdictCounts = (ticket: number): { FARM: number; THIN: number; SKIP: number } => {
     const counts = { FARM: 0, THIN: 0, SKIP: 0 };
     for (const r of priced) {
@@ -1141,18 +1160,27 @@ export function runModel(snapshot: Snapshot): { rows: RadarRow[]; meta: RadarMet
       break;
     }
   }
+  const atPlan = { FARM: 0, THIN: 0, SKIP: 0 };
+  let firstFarmAtPlan: string | null = null;
+  for (const r of priced) {
+    const plan = farmPlan(r.p, asOfMs);
+    const v = economicsAt(r.value, r.p.tvl_usd, plan.feeTotal, planSizeFor(r.p.tvl_usd), DROP_SHARE, TBILL).verdict;
+    atPlan[v as 'FARM' | 'THIN' | 'SKIP']++;
+    if (v === 'FARM' && firstFarmAtPlan === null) firstFarmAtPlan = r.p.name;
+  }
 
   const rows: RadarRow[] = priced.map((r, i) => {
     const p = r.p;
     const plan = farmPlan(p, asOfMs);
     const bands = bandsFor(comps, loo, p.tvl_usd, r.value);
-    const econ = economicsAt(r.value, p.tvl_usd, plan.feeTotal, DEFAULT_TICKET, DROP_SHARE, TBILL);
+    const planTicket = planSizeFor(p.tvl_usd);
+    const econ = economicsAt(r.value, p.tvl_usd, plan.feeTotal, planTicket, DROP_SHARE, TBILL);
     const net = r.odds * econ.slice - econ.costs;
-    const netLow = r.odds * ((DROP_SHARE * bands.p25 * DEFAULT_TICKET) / (p.tvl_usd + DEFAULT_TICKET)) - econ.costs;
+    const netLow = r.odds * ((DROP_SHARE * bands.p25 * planTicket) / (p.tvl_usd + planTicket)) - econ.costs;
     let robust = true;
     for (const share of [0.05, 0.1, 0.2]) {
       for (const tb of [0, 0.04, 0.08]) {
-        if (economicsAt(r.value, p.tvl_usd, plan.feeTotal, DEFAULT_TICKET, share, tb).verdict !== 'FARM') {
+        if (economicsAt(r.value, p.tvl_usd, plan.feeTotal, planTicket, share, tb).verdict !== 'FARM') {
           robust = false;
         }
       }
@@ -1188,6 +1216,7 @@ export function runModel(snapshot: Snapshot): { rows: RadarRow[]; meta: RadarMet
       band90: Math.round(bands.p90),
       rankLo: range.lo,
       rankHi: range.hi,
+      plan: Math.round(planTicket),
       slice: round2(econ.slice),
       costs: round2(econ.costs),
       net: round2(net),
@@ -1251,10 +1280,12 @@ export function runModel(snapshot: Snapshot): { rows: RadarRow[]; meta: RadarMet
       rowsFarFromTvl,
     },
     farm: {
+      atPlan,
+      firstFarmAtPlan,
       at1000,
       at10000,
       firstFarmAt10000,
-      robustAt1000: rows.filter((r) => r.robust).length,
+      robustAtPlan: rows.filter((r) => r.robust).length,
     },
   };
   return { rows, meta };

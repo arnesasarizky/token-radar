@@ -1,7 +1,6 @@
 // Token Launch Radar — the page. Renders window.RADAR (data.js) and re-runs
-// the model live through dashboard/model.js: impliedValue(), launchOdds(),
-// farmPlan() and checkBoard() are the same functions the board was built
-// with, so ticket, drop-share and T-bill changes re-price every row here.
+// the model live through a-model.js, so ticket, drop-share and T-bill
+// changes re-price every row here.
 (function () {
   "use strict";
   var R = window.RADAR || { meta: {}, rows: [], protocols: [], watchlist: [] };
@@ -63,6 +62,7 @@
   if (M.stability) M.stability = { top20: M.stability.top20Stay, medianWidth: M.stability.medianRankWidth, fromTvl: M.stability.rowsFarFromTvl };
   if (FM.at1000) M.verdictCounts = { "1000": { farm: FM.at1000.FARM, thin: FM.at1000.THIN, skip: FM.at1000.SKIP }, "10000": { farm: FM.at10000.FARM, thin: FM.at10000.THIN, skip: FM.at10000.SKIP } };
   if (FM.firstFarmAt10000) M.firstFarmAt10000 = FM.firstFarmAt10000;
+  if (FM.firstFarmAtPlan) M.firstFarmAtPlan = FM.firstFarmAtPlan;
   var LADDER_FB = [{ term: "Flat multiple of TVL", loo: 4.24, wf: 4.24 }, { term: "Comps curve — size only", loo: 2.67, wf: 2.43 }];
   function ladder() {
     var L = M.ladder, out = [];
@@ -94,13 +94,13 @@
   var oddsStats = M.oddsStats || { hitRate: 0.69, baseRate: 0.53, auc: 0.74 };
   function pctOf(v) { return v == null ? "—" : Math.round(v <= 1.5 ? v * 100 : v) + "%"; }
   var vc = M.verdictCounts || {};
-  var vc1000 = vc["1000"] || vc[1000] || { farm: 0, thin: 37, skip: 161 };
   var vc10000 = vc["10000"] || vc[10000] || { farm: 1, thin: 0, skip: 0 };
 
   // ---------- state ----------
-  var S = { ticket: 1000, share: 0.10, tbill: 0.04, q: "", cat: "", verdict: "", sort: "rank" };
+  var S = { ticket: 1000, plan: true, share: 0.10, tbill: 0.04, q: "", cat: "", verdict: "", sort: "rank" };
   var PF = { capital: 10000, hours: 5, safe: false };
-  function fp(r) { return RM.farmPlan(r, S.ticket, S.share, S.tbill); }
+  function tickOf(r) { return S.plan ? RM.planSize(r.tvl) : S.ticket; }
+  function fp(r) { return RM.farmPlan(r, tickOf(r), S.share, S.tbill); }
   function highRisk(r) { return (r.tags || []).some(function (t) { return t === "FALLING" || t === "NEW"; }); }
 
   // ---------- portfolio builder ----------
@@ -138,13 +138,19 @@
   }
   function kpiHtml() {
     var L = ladder(), flat = termOf(L, /flat/i) || L[0], curve = termOf(L, /curve/i) || L[1];
-    var ratio = flat && curve ? (flat.loo / curve.loo).toFixed(1) : "1.6";
     return '<section class="kpis">' +
-      '<div class="kpi"><span class="lab">FARM VERDICTS — NEVER LED BY A ZERO</span><span id="kpiFarm"></span></div>' +
-      '<div class="kpi"><span class="lab">OUT-OF-SAMPLE VALIDATION</span><b>×' + ratio + " CLOSER THAN FLAT</b> — LOO " +
-        x2(curve.loo) + " vs " + x2(flat.loo) + " · walk-forward " + x2(curve.wf) + "</div>" +
+      '<div class="kpi"><span class="lab">FARM VERDICTS</span><span id="kpiFarm"></span></div>' +
+      '<div class="kpi"><span class="lab">OUT-OF-SAMPLE VALIDATION</span><b>LOO ' + x2(curve.loo) +
+        " · WALK-FORWARD " + x2(curve.wf) + "</b> — flat " + x2(flat.loo) +
+        " · every comp priced by a fit that never saw it</div>" +
       '<div class="kpi"><span class="lab">LAUNCH ODDS DISCRIMINATION</span><b>CALLS THE MAJORITY ' + pctOf(oddsStats.hitRate) +
         "</b> vs " + pctOf(oddsStats.baseRate) + " base-rate · AUC " + (+oddsStats.auc).toFixed(2) + "</div></section>";
+  }
+  function formulaHtml() {
+    var cv = RM.curve();
+    return '<div class="strip"><b>impliedValue()</b> — value if launched = 10<sup>' + cv.a.toFixed(4) +
+      "</sup> × TVL<sup>" + cv.b.toFixed(4) + "</sup> × kin · expected value = value × <b>launchOdds()</b>" +
+      " · rows rank by expected value · every farm sized per row by <b>farmPlan()</b>: 0.02% of TVL, $500–$10,000</div>";
   }
   function acctHtml() {
     var tot = CNT.protocols || 758;
@@ -166,6 +172,7 @@
         cats.map(function (c) { return '<option' + (S.cat === c ? " selected" : "") + ">" + esc(c) + "</option>"; }).join("") + "</select>" +
       '<select id="vd"><option value="">All verdicts</option>' +
         ["FARM", "THIN", "SKIP"].map(function (v) { return '<option' + (S.verdict === v ? " selected" : "") + ">" + v + "</option>"; }).join("") + "</select>" +
+      '<label><input type="checkbox" id="plan" style="width:auto" ' + (S.plan ? "checked" : "") + '> plan size per row</label>' +
       '<label>Ticket $<input type="number" id="ticket" min="10" step="10" value="' + S.ticket + '"></label>' +
       '<label>Drop share <select id="share">' +
         [0.05, 0.10, 0.20].map(function (v) { return '<option value="' + v + '"' + (S.share === v ? " selected" : "") + ">" + Math.round(v * 100) + "%</option>"; }).join("") + "</select></label>" +
@@ -271,15 +278,17 @@
     var c = { FARM: 0, THIN: 0, SKIP: 0 };
     ROWS.forEach(function (r) { c[fp(r).verdict]++; });
     var kf = document.getElementById("kpiFarm");
-    if (kf) kf.innerHTML = "<b>THIN OR BETTER AT " + usd0(S.ticket) + " — " + (c.FARM + c.THIN) + "</b> · " +
-      (vc10000.farm || 0) + " FARM at $10,000";
+    if (kf) kf.innerHTML = S.plan
+      ? "<b>" + (vc10000.farm || 0) + " FARM AT $10,000</b> · " + c.THIN + " THIN at plan size · plans 0.02% of TVL ($500–$10,000)"
+      : "<b>" + c.FARM + " FARM AT " + usd0(S.ticket) + "</b> · " + c.THIN + " THIN · " + c.SKIP + " SKIP · " +
+        (vc10000.farm || 0) + " FARM at $10,000";
     var fn = document.getElementById("fn");
     if (fn) {
       var live = ROWS.map(function (r) { return { r: r, f: fp(r) }; }).filter(function (x) { return x.f.verdict !== "SKIP"; });
       live.sort(function (a, b) { return b.f.perHour - a.f.perHour; });
       var top = live.slice(0, 3).map(function (x) { return esc(x.r.name) + " +$" + comma2(x.f.perHour) + "/h " + x.f.verdict; }).join(' <span class="sep">·</span> ');
       if (live.length > 3) top += ' <span class="sep">…</span>';
-      var tail = c.FARM + " FARM / " + c.THIN + " THIN / " + c.SKIP + " SKIP at " + usd0(S.ticket);
+      var tail = c.FARM + " FARM / " + c.THIN + " THIN / " + c.SKIP + " SKIP at " + (S.plan ? "plan size" : usd0(S.ticket));
       if (M.firstFarmAt10000) tail += "; first FARM " + esc(M.firstFarmAt10000) + " at $10,000";
       fn.innerHTML = "<b>FARM NEXT</b> — " + (top || "nothing pays at this ticket") + ' <span class="sep">·</span> ' + tail;
     }
@@ -291,11 +300,10 @@
     var sh = document.getElementById("shown");
     if (sh) sh.textContent = rows.length + " of " + ROWS.length + " rows";
     var sl = document.getElementById("sliceTh");
-    if (sl) sl.textContent = "SLICE @" + usd0(S.ticket);
+    if (sl) sl.textContent = S.plan ? "SLICE @PLAN" : "SLICE @" + usd0(S.ticket);
   }
   function boardView() {
-    document.body.classList.remove("wall");
-    app.innerHTML = chipsHtml() + kpiHtml() + acctHtml() + controlsHtml() +
+    app.innerHTML = chipsHtml() + formulaHtml() + kpiHtml() + acctHtml() + controlsHtml() +
       '<div class="strip" id="fn"></div><div class="strip" id="pf"></div>' +
       '<div class="mainrow"><div class="tablewrap"><table class="board"><colgroup>' +
       '<col style="width:32px"><col style="width:146px"><col style="width:70px"><col style="width:54px"><col style="width:62px">' +
@@ -310,7 +318,12 @@
     bind("q", "input", function () { S.q = this.value; updateBoard(); });
     bind("cat", "change", function () { S.cat = this.value; updateBoard(); });
     bind("vd", "change", function () { S.verdict = this.value; updateBoard(); });
-    bind("ticket", "change", function () { S.ticket = Math.max(10, +this.value || 1000); updateBoard(); });
+    bind("plan", "change", function () { S.plan = this.checked; updateBoard(); });
+    bind("ticket", "change", function () {
+      S.ticket = Math.max(10, +this.value || 1000); S.plan = false;
+      var pc = document.getElementById("plan"); if (pc) pc.checked = false;
+      updateBoard();
+    });
     bind("share", "change", function () { S.share = +this.value; updateBoard(); });
     bind("tbill", "change", function () { S.tbill = +this.value; updateBoard(); });
     bind("sort", "change", function () { S.sort = this.value; updateBoard(); });
@@ -324,7 +337,6 @@
     return Math.floor((Date.parse(s.date) - Math.min.apply(null, ds)) / (7 * 864e5)) + 1;
   }
   function detailView(slug) {
-    document.body.classList.remove("wall");
     var r = rowBySlug[slug], p = protoBySlug[slug];
     if (!r || !p) { boardView(); return; }
     var iv = RM.impliedValue(p), f = fp(r);
@@ -344,7 +356,7 @@
     }).join("");
     var grid = [0.05, 0.10, 0.20].map(function (sh) {
       return "<tr><th>" + Math.round(sh * 100) + "% share</th>" + [0, 0.04, 0.08].map(function (tb) {
-        var v = RM.farmPlan(r, S.ticket, sh, tb).verdict;
+        var v = RM.farmPlan(r, tickOf(r), sh, tb).verdict;
         return '<td><span class="vd ' + v + '">' + v + "</span></td>";
       }).join("") + "</tr>";
     }).join("");
@@ -377,12 +389,13 @@
       '<span class="b75" style="left:' + bpos(r.bandLo) + "%;width:" + Math.max(1, bpos(r.bandHi) - bpos(r.bandLo)) + '%"></span>' +
       '<span class="tick" style="left:' + bpos(r.valueIfLaunched) + '%"></span></div>' +
       "<p>$1M ———————————————————— $1B · pale: P10–P90 · bright: P25–P75 · tick: point price</p></div></div>" +
-      '<div class="box" style="margin-top:10px"><h3>THE FARM PLAN — farmPlan() AT TICKET ' + usd0(S.ticket) + "</h3>" +
+      '<div class="box" style="margin-top:10px"><h3>THE FARM PLAN — farmPlan() AT ' +
+        (S.plan ? "ITS PLAN SIZE " + usd0(Math.round(tickOf(r))) + " (0.02% OF TVL)" : "TICKET " + usd0(S.ticket)) + "</h3>" +
       '<table class="steps"><tr><th>#</th><th>DATE</th><th>ACTION</th><th>FEE</th><th>TIME</th><th>WEEK</th></tr>' + steps +
       '<tr><td></td><td></td><td class="act"><b>Totals</b> — fees ' + d$(f.fees) + " · hands-on " + f.hours.toFixed(1) +
       " h · held " + Math.round(f.weeks) + " wk · T-bill carry incl.</td>" +
       '<td class="num"><b>' + d$(f.fees) + '</b></td><td class="num"><b>' + f.minutes + " min</b></td><td></td></tr></table>" +
-      "<p>At this ticket: slice " + d$(f.slice) + " · costs " + d$(f.costs) + " · <b>net " + d$(f.net) + "</b> · net at the band's low end " +
+      "<p>At this size: slice " + d$(f.slice) + " · costs " + d$(f.costs) + " · <b>net " + d$(f.net) + "</b> · net at the band's low end " +
       d$(f.netLow) + " · break-even launch odds <b>" + beTxt + "</b> · " +
       (f.be > 1 ? "never pays at any ticket" : "pays from " + usd0(Math.max(10, Math.round((f.paysFrom || 0) / 10) * 10))) + "</p></div>" +
       '<div class="cols"><div class="box"><h3>VERDICT MATH AT THREE TICKETS</h3>' +
@@ -393,21 +406,37 @@
       "<p>" + (f.robust ? "FARM at all nine grid points — marked robust." : "Not robust: the verdict moves inside the grid.") + "</p></div></div></div>";
   }
 
-  // ---------- watchlist wall ----------
-  function wallView() {
-    document.body.classList.add("wall");
-    var rows = ROWS.filter(function (r) { return r.watchlist; }).sort(function (a, b) { return a.rank - b.rank; });
-    app.innerHTML = '<div class="wallgrid">' + rows.map(function (r) {
-      var f = fp(r);
-      return '<div class="card"><div class="r1"><span class="nm">' + esc(r.name) + '</span><span class="vd ' + f.verdict + '">' + f.verdict + "</span></div>" +
-        '<div class="ln"><span class="rk">#' + r.rank + "</span> · TVL " + c$(r.tvl) + " · odds " + Math.round(r.odds * 100) + "% · EV " + c$(r.ev) + "</div>" +
-        '<div class="pl">' + planLine(r, f) + "</div></div>";
-    }).join("") + "</div>";
+  // ---------- farm book: every FARM/THIN row at plan size, best net/hour first ----------
+  function farmView() {
+    var live = ROWS.map(function (r) { return { r: r, f: fp(r) }; })
+      .filter(function (x) { return x.f.verdict !== "SKIP"; });
+    live.sort(function (a, b) { return b.f.perHour - a.f.perHour; });
+    var nf = live.filter(function (x) { return x.f.verdict === "FARM"; }).length;
+    app.innerHTML = '<div class="strip"><b>THE FARM BOOK</b> — every FARM/THIN row at its plan size ' +
+      "(0.02% of TVL, $500–$10,000), best net per hour first · " + nf + " FARM · " + (live.length - nf) +
+      " THIN of " + ROWS.length + " · watchlist " + dig(counts.watchlistCovered, 40) + "/" +
+      dig(counts.watchlist, 40) + ' ranked on the board</div>' +
+      '<div class="tablewrap"><table class="board"><thead><tr>' +
+      "<th>#</th><th>PROTOCOL</th><th class=\"num\">TVL</th><th>ODDS</th><th class=\"num\">EXPECTED VALUE</th>" +
+      "<th class=\"num\">PLAN SIZE</th><th class=\"num\">SLICE</th><th class=\"num\">NET</th><th class=\"num\">NET/H</th><th>VERDICT</th><th>PLAN</th>" +
+      "</tr></thead><tbody>" +
+      live.map(function (x) {
+        var r = x.r, f = x.f;
+        return "<tr><td><b>" + r.rank + '</b></td><td class="pr"><a href="#/p/' + esc(r.slug) + '">' + esc(r.name) + "</a>" +
+          '<span class="sub">' + esc(r.category || "—") + "</span>" + badgesHtml(r) + "</td>" +
+          '<td class="num">' + c$(r.tvl) + "</td><td>" + Math.round(r.odds * 100) + "%</td>" +
+          '<td class="num"><b>' + c$(r.ev) + "</b></td>" +
+          '<td class="num">' + usd0(Math.round(tickOf(r))) + "</td>" +
+          '<td class="num">' + d$(f.slice) + "</td>" +
+          '<td class="num">' + d$(f.net) + "</td>" +
+          '<td class="num">' + (f.perHour >= 0 ? "+" : "-") + "$" + Math.abs(f.perHour).toFixed(2) + "/h</td>" +
+          '<td><span class="vd ' + f.verdict + '">' + f.verdict + "</span>" + (f.robust ? '<span class="rob">ROBUST 9/9</span>' : "") + "</td>" +
+          '<td class="plan">' + planLine(r, f) + "</td></tr>";
+      }).join("") + "</tbody></table></div>";
   }
 
   // ---------- method ----------
   function methodView() {
-    document.body.classList.remove("wall");
     var L = ladder(), cv = RM.curve();
     var lad = L.map(function (r) {
       var shipped = /curve/i.test(r.term), dropped = !shipped && !/flat/i.test(r.term);
@@ -467,7 +496,6 @@
 
   // ---------- portfolio ----------
   function pfView() {
-    document.body.classList.remove("wall");
     var p = buildPortfolio(S.ticket);
     var rows = p.sel.map(function (x) {
       return '<tr><td><a href="#/p/' + esc(x.r.slug) + '">' + esc(x.r.name) + '</a></td><td>' + usd0(S.ticket) + '</td><td>' +
@@ -496,7 +524,7 @@
   function route() {
     var h = (location.hash || "#/board").replace(/^#\//, "").split("/");
     if (h[0] === "p" && h[1]) detailView(decodeURIComponent(h[1]));
-    else if (h[0] === "watchlist") wallView();
+    else if (h[0] === "farm") farmView();
     else if (h[0] === "method") methodView();
     else if (h[0] === "portfolio") pfView();
     else boardView();
